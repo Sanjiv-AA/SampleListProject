@@ -1,0 +1,218 @@
+package com.example.listview
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
+import android.util.Log
+import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.Card
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.RadioButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.tooling.preview.Preview
+
+@Composable
+fun ListScreen(
+    viewModel: ListViewModel = viewModel(),
+    modifier: Modifier = Modifier,
+    // idle timeout in milliseconds; tests can pass a smaller value
+    idleTimeoutMs: Long = 30_000L,
+    // action to run when idle detected; default logs a message
+    onIdle: () -> Unit = { Log.i("IdlePrinter", "Idle for $idleTimeoutMs ms - printing...") }
+) {
+    val state by viewModel.uiState.collectAsState()
+
+    // Verify composable is composed at startup
+    Log.e("DBG", "ListScreen entered")
+
+    // track the last time the user interacted (click/tap/scroll will update)
+    val lastInteractionTimestamp = remember { mutableStateOf(System.currentTimeMillis()) }
+    fun recordInteraction() {
+        lastInteractionTimestamp.value = System.currentTimeMillis()
+        // Log the actual long value (not the MutableState object) so it appears clearly in Logcat
+        Log.i("lastInteractionTimestamp", "lastInteractionTimestamp ${lastInteractionTimestamp.value} ms")
+        // Extra high-priority log to make verification easier while debugging
+        Log.e("DBG", "recordInteraction() called — ${lastInteractionTimestamp.value}")
+    }
+
+    // Full-screen pointer input that records any user interaction (touch/drag/etc.)
+    // so we don't need to add recordInteraction() to every clickable/radio button.
+    val fullScreenInteractionModifier = Modifier.pointerInteropFilter {
+        // any MotionEvent -> record and allow propagation
+        recordInteraction()
+        false
+    }
+
+    Surface(modifier = modifier.fillMaxSize().then(fullScreenInteractionModifier)) {
+
+        val options = listOf("All","Reroute", "Return", "Forward")
+        var selectedOption by remember { mutableStateOf(options[0]) }
+
+
+        val sortOptions = listOf("Ascending", "Descending")
+        var sortSelectedOption by remember { mutableStateOf(sortOptions[0]) }
+
+        // remember a LazyListState to control scroll position
+        val listState = rememberLazyListState()
+
+        // Coroutine that checks for idle state periodically and triggers onIdle once per idle period
+        LaunchedEffect(Unit) {
+            while (true) {
+                delay(500)
+                val idleTime = System.currentTimeMillis() - lastInteractionTimestamp.value
+                if (idleTime >= idleTimeoutMs && !listState.isScrollInProgress) {
+                    try {
+                        onIdle()
+                    } catch (t: Throwable) {
+                        Log.e("IdlePrinter", "onIdle failed", t)
+                    }
+                    // update timestamp so we don't repeatedly fire until the next interaction
+                    lastInteractionTimestamp.value = System.currentTimeMillis()
+                }
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+        )
+        {
+            Text("Sample List View", style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp, top = 50.dp, bottom = 50.dp))
+            // Use a LazyRow so options are arranged horizontally and scroll when needed
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp)
+            ) {
+                items(options) { option ->
+                    Row(
+                        modifier = Modifier
+                            .clickable { selectedOption = option }
+                            .padding(8.dp)
+                    ) {
+                        RadioButton(
+                            selected = (option == selectedOption),
+                            onClick = { selectedOption = option }
+                        )
+                        Text(text = option)
+                    }
+                }
+            }
+
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp)
+            ) {
+                items(sortOptions) { option ->
+                    Row(
+                        modifier = Modifier
+                            .clickable { sortSelectedOption = option }
+                            .padding(8.dp)
+                    ) {
+                        RadioButton(
+                            selected = (option == sortSelectedOption),
+                            onClick = { sortSelectedOption = option }
+                        )
+                        Text(text = option)
+                    }
+                }
+            }
+
+            // Memoize filtered+sorted result so it recomputes only when inputs change
+            val sorted by remember(selectedOption, sortSelectedOption, state.items) {
+                derivedStateOf {
+                    val filtered = if (selectedOption == "All") state.items else state.items.filter { it.title == selectedOption }
+                    when (sortSelectedOption) {
+                        "Ascending" -> filtered.sortedBy { it.bagTagId }
+                        "Descending" -> filtered.sortedByDescending { it.bagTagId }
+                        else -> filtered
+                    }
+                }
+            }
+
+            // Scroll to first item whenever the filter or sort selection changes
+            LaunchedEffect(selectedOption, sortSelectedOption) {
+                if (sorted.isNotEmpty()) {
+                    listState.scrollToItem(0)
+                }
+            }
+
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 16.dp)
+            ) {
+                items(sorted, key = { it.bagTagId }) { item ->
+                    // root full-screen pointer listener handles touches, so omit per-item callback
+                    ItemRow(item)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ItemRow(item: Item, onInteract: () -> Unit = {}) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onInteract()},
+        shape = RoundedCornerShape(8.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(text = item.bagTagId.toString(), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun ListScreenPreview() {
+    val sampleItems = listOf(
+        Item(1, "Preview A"),
+        Item(2, "Preview B")
+    )
+
+    // Show sample rows for preview
+    Column(Modifier.padding(16.dp)) {
+        ItemRow(sampleItems[0])
+        Spacer(modifier = Modifier.height(8.dp))
+        ItemRow(sampleItems[1])
+    }
+}
